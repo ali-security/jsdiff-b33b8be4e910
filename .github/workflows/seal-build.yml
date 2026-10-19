@@ -1,0 +1,42 @@
+# Sealed build: build and pack the published tgz. Tests run on Travis (.travis.yml).
+name: seal-build
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '21'
+
+      - name: Ensure yarn v1
+        run: command -v yarn >/dev/null 2>&1 || npm install -g yarn@1.22.22
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # Upstream release: yarn clean; yarn grunt; yarn grunt uglify; yarn publish
+      - name: Build lib/ and dist/
+        run: yarn grunt clean build
+
+      - name: Minify dist/
+        run: yarn grunt uglify
+
+      # .github is not in .npmignore and must not ship in the tgz.
+      - name: Remove .github before packing
+        run: rm -rf .github
+
+      - name: Pack
+        run: yarn pack --filename diff-5.2.0.tgz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diff-5.2.0
+          path: diff-5.2.0.tgz
+          if-no-files-found: error
