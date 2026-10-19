@@ -708,6 +708,24 @@ describe('patch/apply', function() {
       expect(applyPatch(oldtext, diffed)).to.equal(newtext);
     });
 
+    it('should apply string patches whose file headers contain U+2028 or U+2029', function() {
+      // Regression test for CVE-2026-24001: applyPatch parses string patches
+      // with parsePatch, which used to loop forever on such headers.
+      const LS = String.fromCharCode(0x2028),
+            PS = String.fromCharCode(0x2029);
+      expect(applyPatch(
+        'line1\nline2\n',
+        'Index: a' + LS + 'file\n'
+        + '===================================================================\n'
+        + '--- a' + LS + 'file\theader1\n'
+        + '+++ a' + PS + 'file\theader2\n'
+        + '@@ -1,2 +1,2 @@\n'
+        + ' line1\n'
+        + '-line2\n'
+        + '+line02\n'))
+        .to.equal('line1\nline02\n');
+    });
+
     it('handle empty text', function() {
       const oldtext = '';
       const newtext = 'asdasd\n';
@@ -949,6 +967,53 @@ foo3
           callback();
         },
         complete: done
+      });
+    });
+
+    it('should handle file names containing U+2028 or U+2029', done => {
+      // Regression test for CVE-2026-24001: applyPatches parses string
+      // patches with parsePatch, which used to loop forever on such headers.
+      const lsName = 'test' + String.fromCharCode(0x2028) + 'file',
+            psName = 'test' + String.fromCharCode(0x2029) + 'file';
+      const patch =
+        '--- ' + lsName + '\theader1\n'
+        + '+++ ' + lsName + '\theader2\n'
+        + '@@ -1,2 +1,3 @@\n'
+        + ' line1\n'
+        + '+line2\n'
+        + ' line3\n'
+        + '--- ' + psName + '\theader1\n'
+        + '+++ ' + psName + '\theader2\n'
+        + '@@ -1,2 +1,3 @@\n'
+        + ' foo1\n'
+        + '+foo2\n'
+        + ' foo3\n';
+
+      const contents = {};
+      contents[lsName] = 'line1\nline3\n';
+      contents[psName] = 'foo1\nfoo3\n';
+
+      const expected = {};
+      expected[lsName] = 'line1\nline2\nline3\n';
+      expected[psName] = 'foo1\nfoo2\nfoo3\n';
+
+      const patched = [];
+      applyPatches(patch, {
+        loadFile(index, callback) {
+          callback(undefined, contents[index.oldFileName]);
+        },
+        patched(index, content, callback) {
+          expect(content)
+              .to.equal(expected[index.newFileName])
+              .to.not.be.undefined;
+          patched.push(index.newFileName);
+
+          callback();
+        },
+        complete(err) {
+          expect(patched).to.eql([lsName, psName]);
+          done(err);
+        }
       });
     });
   });

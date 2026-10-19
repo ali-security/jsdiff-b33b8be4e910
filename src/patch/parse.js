@@ -17,10 +17,27 @@ export function parsePatch(uniDiff, options = {}) {
         break;
       }
 
-      // Diff index
-      let header = (/^(?:Index:|diff(?: -r \w+)+)\s+(.+?)\s*$/).exec(line);
-      if (header) {
-        index.index = header[1];
+      // Try to parse the line as a diff header, like
+      //     Index: README.md
+      // or
+      //     diff -r 9117c6561b0b -r 273ce12ad8f1 .hgignore
+      // or
+      //     Index: something with multiple words
+      // and extract the filename (or whatever else is used as an index name)
+      // from the end (i.e. 'README.md', '.hgignore', or
+      // 'something with multiple words' in the examples above).
+      //
+      // NOTE: It seems awkward that we indiscriminately trim off trailing
+      //       whitespace here. Theoretically, couldn't that be meaningful -
+      //       e.g. if the patch represents a diff of a file whose name ends
+      //       with a space? Seems wrong to nuke it.
+      //       But this behaviour has been around since v2.2.1 in 2015, so if
+      //       it's going to change, it should be done cautiously and in a new
+      //       major release, for backwards-compat reasons.
+      //       -- ExplodingCabbage
+      const headerMatch = (/^(?:Index:|diff(?: -r \w+)+)\s+/).exec(line);
+      if (headerMatch) {
+        index.index = line.substring(headerMatch[0].length).trim();
       }
 
       i++;
@@ -53,21 +70,30 @@ export function parsePatch(uniDiff, options = {}) {
   // Parses the --- and +++ headers, if none are found, no lines
   // are consumed.
   function parseFileHeader(index) {
-    const fileHeader = (/^(---|\+\+\+)\s+(.*)$/).exec(diffstr[i]);
-    if (fileHeader) {
-      let keyPrefix = fileHeader[1] === '---' ? 'old' : 'new';
-      const data = fileHeader[2].split('\t', 2);
+    const fileHeaderMatch = (/^(---|\+\+\+)\s+/).exec(diffstr[i]);
+    if (fileHeaderMatch) {
+      const prefix = fileHeaderMatch[1];
+      const data = diffstr[i].substring(3).trim().split('\t', 2);
+      const header = (data[1] || '').trim();
       let fileName = data[0].replace(/\\\\/g, '\\');
-      if ((/^".*"$/).test(fileName)) {
+      // (Checked with charAt rather than startsWith/endsWith, which are not
+      // available on every Node version this package supports.)
+      if (fileName.length >= 2
+          && fileName.charAt(0) === '"'
+          && fileName.charAt(fileName.length - 1) === '"') {
         fileName = fileName.substr(1, fileName.length - 2);
       }
-      index[keyPrefix + 'FileName'] = fileName;
-      index[keyPrefix + 'Header'] = (data[1] || '').trim();
+      if (prefix === '---') {
+        index.oldFileName = fileName;
+        index.oldHeader = header;
+      } else {
+        index.newFileName = fileName;
+        index.newHeader = header;
+      }
 
       i++;
     }
   }
-
   // Parses a hunk
   // This assumes that we are at the start of a hunk.
   function parseHunk() {
